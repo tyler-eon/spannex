@@ -107,16 +107,14 @@ defmodule Spannex.Protocol do
 
     # If no authorization header is supplied, use goth to fetch an access token.
     headers =
-      case List.keymember?(headers, "authorization", 0) do
-        nil ->
-          %{
-            type: type,
-            token: token
-          } = Goth.fetch!(Credits.Goth)
-          [{"authorization", "#{type} #{token}"} | headers]
-
-        _ ->
-          headers
+      if List.keymember?(headers, "authorization", 0) do
+        headers
+      else
+        %{
+          type: type,
+          token: token
+        } = Goth.fetch!(Credits.Goth)
+        [{"authorization", "#{type} #{token}"} | headers]
       end
 
     # Spanner requires content-type to be set to "application/grpc".
