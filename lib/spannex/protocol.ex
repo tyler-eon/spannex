@@ -99,24 +99,30 @@ defmodule Spannex.Protocol do
 
   # Connect to the Spanner API endpoint over a gRPC channel.
   defp grpc_connect(opts) do
-    %{
-      type: type,
-      token: token
-    } =
-      opts
-      |> Keyword.fetch!(:goth)
-      |> Goth.fetch!()
-
     grpc_host = Keyword.get(opts, :host, "spanner.googleapis.com:443")
-    grpc_opts =
-      [
-        cred: GRPC.Credential.new(ssl: true),
-        headers: [
-          {"content-type", "application/grpc"},
-          {"authorization", "#{type} #{token}"},
-        ]
-      ]
-      |> Keyword.merge(Keyword.get(opts, :grpc_opts, []))
+    grpc_opts = Keyword.get(opts, :grpc_opts, [])
+
+    # We require `content-type` and `authorization` headers to be set during the gRPC connection.
+    headers = Keyword.get(grpc_opts, :headers, [])
+
+    # If no authorization header is supplied, use goth to fetch an access token.
+    headers =
+      case List.keymember?(headers, "authorization", 0) do
+        nil ->
+          %{
+            type: type,
+            token: token
+          } = Goth.fetch!(Credits.Goth)
+          [{"authorization", "#{type} #{token}"} | headers]
+
+        _ ->
+          headers
+      end
+
+    # Spanner requires content-type to be set to "application/grpc".
+    headers = List.keystore(headers, "content-type", 0, "application/grpc")
+
+    grpc_opts = Keyword.put(grpc_opts, :headers, headers)
 
     Logger.debug("Connecting to the Spanner gRPC endpoint: #{grpc_host}", host: grpc_host, opts: opts)
     GRPC.Stub.connect(grpc_host, grpc_opts)
