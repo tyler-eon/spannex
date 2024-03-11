@@ -30,7 +30,8 @@ defmodule Spannex.MixProject do
       {:db_connection, "~> 2.6"},
       {:goth, "~> 1.4"},
       {:google_protos, "~> 0.4"},
-      {:grpc, "~> 0.7"}
+      {:grpc, "~> 0.7"},
+      {:ex_doc, ">= 0.0.0", only: :dev, runtime: false},
     ]
   end
 
