@@ -7,7 +7,13 @@ defmodule Spannex.MixProject do
       version: "0.1.0",
       elixir: "~> 1.15",
       start_permanent: Mix.env() == :prod,
-      deps: deps()
+      deps: deps(),
+      description: """
+      Elixir client for the Google Cloud Spanner database using gRPC.
+      """,
+      package: package(),
+      source_url: "https://github.com/tyler-eon/spannex",
+      homepage_url: "https://github.com/tyler-eon/spannex",
     ]
   end
 
@@ -25,6 +31,17 @@ defmodule Spannex.MixProject do
       {:goth, "~> 1.4"},
       {:google_protos, "~> 0.4"},
       {:grpc, "~> 0.7"}
+    ]
+  end
+
+  # For Hex packaging.
+  defp package do
+    [
+      links: %{
+        "GitHub" => "https://github.com/tyler-eon/spannex",
+        "HexDocs" => "https://hexdocs.pm/spannex"
+      },
+      licenses: ["Apache-2.0"],
     ]
   end
 end
