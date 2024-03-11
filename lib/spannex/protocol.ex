@@ -88,6 +88,17 @@ defmodule Spannex.Protocol do
     # Allows DBConnection to disconnect on unexpected exits.
     Process.flag(:trap_exit, true)
 
+    case grpc_connect(opts) do
+      {:ok, channel} ->
+        create_session(channel, opts)
+
+      error ->
+        error
+    end
+  end
+
+  # Connect to the Spanner API endpoint over a gRPC channel.
+  defp grpc_connect(opts) do
     %{
       type: type,
       token: token
@@ -108,9 +119,11 @@ defmodule Spannex.Protocol do
       |> Keyword.merge(Keyword.get(opts, :grpc_opts, []))
 
     Logger.debug("Connecting to the Spanner gRPC endpoint: #{grpc_host}", host: grpc_host, opts: opts)
+    GRPC.Stub.connect(grpc_host, grpc_opts)
+  end
 
-    {:ok, channel} = GRPC.Stub.connect(grpc_host, grpc_opts)
-
+  # Given a gRPC channel, create a new session for the database connection.
+  defp create_session(channel, opts) do
     database = Keyword.fetch!(opts, :database)
     labels = Keyword.get(opts, :labels, %{})
 
@@ -124,11 +137,10 @@ defmodule Spannex.Protocol do
     Logger.debug("Creating a new Spanner session to #{database}", database: database, labels: labels)
     case Service.create_session(channel, request) do
       {:ok, session} ->
-        Logger.debug("Connected to Spanner", session: session, database: database)
         {:ok, %__MODULE__{channel: channel, session: session}}
 
-      {:error, error} ->
-        {:error, error}
+      error ->
+        error
     end
   end
 
