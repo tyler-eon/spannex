@@ -40,6 +40,10 @@ Additionally, `Spannex` uses [goth](https://github.com/peburrows/goth) to fetch 
 
 And because we use [grpc](https://github.com/elixir-grpc/grpc) to communicate with the database, you can also fine-tune you gRPC configuration by setting `:grpc_opts` in the child spec options.
 
+## Querying
+
+Right now only "simple" querying is supported. The query wrapper, `Spannex.Query`, only has two fields: `:statement` and `:params`. When a statement is executed immediately, i.e. in a `:read_write` transaction during a `handle_execute/4` callback, the supplied parameters completely override the encoded `Spannex.Query` parameters. In fact, the encoded query parameters are only ever used during `:batch_write` transaction commits, since all of the SQL statements for batch write mutations are queued locally and "executed" only during the commit phase.
+
 ## Protobuf
 
 The repo contains a "pinned" version of the necessary Protobuf files required to successfully run `Spannex`.
