@@ -120,7 +120,22 @@ defmodule Spannex.Protocol do
       end
 
     # Spanner requires content-type to be set to "application/grpc".
-    headers = List.keystore(headers, "content-type", 0, "application/grpc")
+    headers = List.keystore(headers, "content-type", 0, {"content-type", "application/grpc"})
+
+    # If `cred` is not set, but `443` is specified in the host, add a default SSL-enabled `cred` option.
+    grpc_opts =
+      case Keyword.get(opts, :cred, nil) do
+        nil ->
+          if String.ends_with?(grpc_host, ":443") do
+            # TODO: Should probably default to using the Erlang SSL library to specify cacerts by default.
+            Keyword.put(grpc_opts, :cred, GRPC.Credential.new(ssl: [verify: :verify_none]))
+          else
+            grpc_opts
+          end
+
+        _ ->
+          grpc_opts
+      end
 
     grpc_opts = Keyword.put(grpc_opts, :headers, headers)
 
