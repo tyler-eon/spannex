@@ -38,6 +38,11 @@ defmodule Spannex do
   def start_link(opts), do: DBConnection.start_link(Spannex.Protocol, opts)
 
   @doc """
+  Runs the given function inside a Spanner transaction.
+  """
+  def transaction(conn, fun, opts \\ []), do: DBConnection.transaction(conn, fun, opts)
+
+  @doc """
   Converts a string SQL statement into a `Spannex.Query` struct before calling `DBConnection.prepare_execute/4`.
   """
   def execute(conn, statement, params, opts \\ []) do

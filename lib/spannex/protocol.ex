@@ -254,7 +254,7 @@ defmodule Spannex.Protocol do
     {:ok, %Spanner.BatchWriteResponse{status: status}} = Service.batch_write(state.channel, request)
     case status do
       %{code: 0} ->
-        {:ok, :ok, %{state | status: :idle, transaction: :none}}
+        {:ok, :ok, %{state | status: :idle, transaction: :none, queries: []}}
 
       error ->
         {:disconnect, error, state}
@@ -267,9 +267,9 @@ defmodule Spannex.Protocol do
       transaction: {:transaction_id, state.transaction_id},
       return_commit_stats: true
     }
-    case  Service.commit(state.channel, request) do
-      {:ok, %{commit_stats: %{mutation_count: count}}} ->
-        {:ok, count, %{state | status: :idle, transaction: :none, transaction_id: nil}}
+    case Service.commit(state.channel, request) do
+      {:ok, %Spanner.CommitResponse{commit_stats: stats}} ->
+        {:ok, stats, %{state | status: :idle, transaction: :none, transaction_id: nil}}
 
       {:error, error} ->
         {:disconnect, error, state}
@@ -312,15 +312,19 @@ defmodule Spannex.Protocol do
   def handle_close(_query, _opts, state), do: {:ok, nil, state}
 
   @doc """
-  Executes a SQL query against the Spanner API.
+  Executes a SQL statement against the Spanner API.
 
-  If the query is a `SELECT` statement, it will be executed in a temporary read-only transaction.
+  All statements that are mutations (i.e. not `SELECT` statements) must be executed within a transaction or they will produce an error.
 
-  All other queries must be executed within a transaction.
+  If a `SELECT` statement is executed outside of a transaction, the database will generate a temporary `:read_only` transaction to run it in.
 
-  If there is a running `:batch_write` transaction, the query will be queued up locally and not sent to the Spanner API until `handle_commit/2` is called.
+  If the transaction type is `:batch_write`, the query will be queued up locally and not sent to the Spanner API until `handle_commit/2` is called. This means the result portion of the response tuple will be `nil` since there's no result to return yet.
   """
   @impl DBConnection
+  def handle_execute(query, params, _opts, %{status: :transaction, transaction: :batch_write} = state) do
+    {:ok, query, nil, %{state | queries: [%{query | params: params} | state.queries]}}
+  end
+
   def handle_execute(query, params, _opts, %{status: :transaction, seqno: seqno} = state) do
     # If we're in a transaction, we're guaranteed that we can execute the statement.
     request = %Spanner.ExecuteSqlRequest{
@@ -329,16 +333,16 @@ defmodule Spannex.Protocol do
         selector: {:id, state.transaction_id}
       },
       sql: query.statement,
-      params: params,
+      params: wrap_params(params),
       seqno: seqno,
     }
-      case Service.execute_sql(state.channel, request) do
-        {:ok, %Spanner.ResultSet{} = results} ->
-          {:ok, query, results, %{state | seqno: seqno + 1}}
+    case Service.execute_sql(state.channel, request) do
+      {:ok, %Spanner.ResultSet{} = results} ->
+        {:ok, query, decode_results(results), %{state | seqno: seqno + 1}}
 
-        {:error, error} ->
-          {:disconnect, error, state}
-      end
+      {:error, error} ->
+        {:disconnect, error, state}
+    end
   end
 
   def handle_execute(%{statement: "SELECT" <> _} = query, params, _opts, state) do
@@ -346,16 +350,46 @@ defmodule Spannex.Protocol do
     request = %Spanner.ExecuteSqlRequest{
       session: state.session.name,
       sql: query.statement,
-      params: params
+      params: wrap_params(params)
     }
     {:ok, %Spanner.ResultSet{} = results} = Service.execute_sql(state.channel, request)
-    {:ok, query, results, state}
+    {:ok, query, decode_results(results), state}
   end
 
   def handle_execute(_query, _params, _opts, state) do
     # All requests that are not SELECTs require an explicit transaction.
     {:error, %GRPC.RPCError{status: 9, message: "Cannot execute write statements outside of a transaction."}, state}
   end
+
+  # Wrap a set of named parameters in a `Google.Protobuf.Struct`.
+  defp wrap_params(%{params: params}) do
+    fields =
+      params
+      |> Enum.map(fn
+        {key, value} when is_atom(key) ->
+          {Atom.to_string(key), wrap_value(value)}
+        {key, value} when is_binary(key) ->
+          {key, wrap_value(value)}
+      end)
+      |> Enum.into(%{})
+    %Google.Protobuf.Struct{fields: fields}
+  end
+
+  # Special nil value.
+  defp wrap_value(nil), do: %Google.Protobuf.Value{kind: {:null_value, :NULL_VALUE}}
+
+  # Whoa wtf is this? Well, gRPC encodes to JSON, but integers in JSON only are guaranteed up to 32-bits. So how does Google solve this?
+  # They use strings! Any INT64 data type is returned as a string and must be sent as a string to be converted back to a numeric value at the destination.
+  defp wrap_value(value) when is_integer(value), do: %Google.Protobuf.Value{kind: {:string_value, Integer.to_string(value)}}
+
+  # Standard types.
+  defp wrap_value(value) when is_binary(value), do: %Google.Protobuf.Value{kind: {:string_value, value}}
+  defp wrap_value(value) when is_float(value), do: %Google.Protobuf.Value{kind: {:number_value, value}}
+  defp wrap_value(value) when is_boolean(value), do: %Google.Protobuf.Value{kind: {:bool_value, value}}
+
+  # Aggregate types.
+  #defp wrap_value(value) when is_list(value), do: %Google.Protobuf.Value{kind: {:list_value, wrap_list(value)}}
+  #defp wrap_value(value) when is_map(value), do: %Google.Protobuf.Value{kind: {:struct_value, wrap_struct(value)}}
 
   @doc """
   No-op
@@ -385,10 +419,10 @@ defmodule Spannex.Protocol do
   def handle_status(_opts, %{status: status} = state), do: {status, state}
 
   # A set of regex patterns that convert GoogleSQL DML into components parts used to make mutations.
-  @insert_re ~r/INSERT\s+(?:OR\s+IGNORE|UPDATE)?\s*(?:INTO)?\s+(?<table>\w+)\s*\((?<columns>.*?)\)\s*(?<values>VALUES\s*\((.*?)\)\s*(?:,\s*\(.*?)?)?\s*(?<select>SELECT.*?);/i
+  @insert_re ~r/INSERT\s+(?:OR\s+IGNORE|UPDATE)?\s*(?:INTO)?\s+(?<table>\w+)\s*\((?<columns>.*?)\)\s*(?<values>VALUES\s*\((.*?)\)\s*(?:,\s*\(.*?)?)?\s*(?<select>SELECT.*?)/i
   @values_re ~r/VALUES\s*\((.*?)\)(?:\s*,\s*\((.*?)\))*/i
-  @update_re ~r/UPDATE\s+(?<table>\w+)\s*(.*?)\s*SET\s+(?<update>.*?)\s*WHERE\s+(?<where>.*?);/i
-  @delete_re ~r/DELETE\s+(?:FROM\s+)?(?<table>\w+)\s*(?:.*?WHERE\s+(?<where>.*?))?\s*;/i
+  @update_re ~r/UPDATE\s+(?<table>\w+)\s*(.*?)\s*SET\s+(?<update>.*?)\s*WHERE\s+(?<where>.*?)/i
+  @delete_re ~r/DELETE\s+(?:FROM\s+)?(?<table>\w+)\s*(?:.*?WHERE\s+(?<where>.*?))?\s*/i
   @value_re ~r/\w+\s*=\s*(?:'[^']*'|[^,]+)/
   @where_re ~r/\w+\s*(?:[<>!=]+\s*(?:'[^']*'|[^' ]+))?(?=\s*AND|\z)/i
 
@@ -484,27 +518,19 @@ defmodule Spannex.Protocol do
   end
 
   @doc """
-  Converts the data from a `Google.Spanner.V1.ResultSet` into a list of maps, where each map is one row of the result set. The keys of the map are the column names and the values are the column values. The column values are converted from their encoded form to their Elixir-native representation.
+  Converts the row data from a `Google.Spanner.V1.ResultSet` into a list of maps, where each map is one row of the result set. The keys of the map are the column names and the values are the column values. The column values are converted from their encoded form to their Elixir-native representation.
   """
-  def map_results(%Spanner.ResultSet{metadata: meta, rows: rows}) do
-    Enum.map(rows, fn row ->
-      map_row(meta.row_type.fields, row.values, %{})
+  def decode_results(%Spanner.ResultSet{metadata: %{row_type: %{fields: fields}}, rows: rows}) do
+    Enum.map(rows, fn %{values: row} ->
+      decode_row(fields, row, %{})
     end)
   end
 
-  @doc """
-  Maps a single row of a result set into a map of column names to column values. The column names are taken from the "fields" metadata passed as the first argument. The list of column values given as the second argument are converted from their gRPC-encoded form to their Elixir-native representation.
+  def decode_row([], [], acc), do: acc
 
-  **Important**: An exception will be raised if the number of column metadata items does not match the number of column values.
-  """
-  def map_row([], [], acc), do: acc
-
-  def map_row(
-    [%{name: name, type: %{code: type}} | fields],
-    [%{kind: {enc_type, value}} | rows],
-    acc
-  ) do
-    map_row(fields, rows, Map.put(acc, name, convert_value(type, enc_type, value)))
+  def decode_row([%{name: field, type: %{code: type}} | fields], [%{kind: {wire_type, wire_value}} | rows], acc) do
+    acc = Map.put(acc, field, convert_value(type, wire_type, wire_value))
+    decode_row(fields, rows, acc)
   end
 
   @doc """
