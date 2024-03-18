@@ -43,7 +43,7 @@ defmodule Spannex.Protocol do
   require Logger
 
   alias Google.Spanner.V1, as: Spanner
-  alias Google.Spanner.V1.Spanner.Stub, as: Service
+  alias Spannex.Service
 
   @type transaction_type :: :none | :batch_write | :read_write | :read_only | :partitioned_dml
 
@@ -55,6 +55,7 @@ defmodule Spannex.Protocol do
     transaction_id: String.t(),
     seqno: non_neg_integer(),
     queries: [DBConnection.query()],
+    goth: term(),
   }
 
   defstruct [
@@ -65,6 +66,7 @@ defmodule Spannex.Protocol do
     transaction_id: nil,
     seqno: 0,
     queries: [],
+    goth: nil,
   ]
 
   @doc """
@@ -76,21 +78,25 @@ defmodule Spannex.Protocol do
 
   You may optionally supply the following other options:
 
-  - `:goth` - The name of the Goth instance used to fetch access tokens. Required if no authorization header is supplied as part of `:grpc_opts`.
+  - `:goth` - The term used to access the `Goth` library to fetch an access token.
   - `:labels` - A map of labels to apply to the session. These labels can be used to filter and monitor sessions using the Cloud console or admin API.
   - `:host` - The gRPC endpoint to connect to. If not supplied, the global Spanner API endpoint is used.
   - `:grpc_opts` - The options to pass to `GRPC.Stub.connect/2`.
   - `:cred` - A gRPC credential wrapper. If not supplied, the `Goth` library is used to fetch a Google Cloud access token.
-  - `:headers` - A list of headers to use for the connection. If not supplied, `content-type` and `authorization` headers will be set to sane defaults.
+  - `:headers` - A list of headers to use for the connection. If `content-type` and `authorization` are supplied, they will be overwritten.
   """
   @impl DBConnection
   def connect(opts) do
     # Allows DBConnection to disconnect on unexpected exits.
     Process.flag(:trap_exit, true)
 
-    case grpc_connect(opts) do
-      {:ok, channel} ->
-        create_session(channel, opts)
+    state = %__MODULE__{
+      goth: Keyword.fetch!(opts, :goth),
+    }
+
+    case grpc_connect(opts, state) do
+      {:ok, state} ->
+        create_session(opts, state)
 
       error ->
         error
@@ -98,27 +104,19 @@ defmodule Spannex.Protocol do
   end
 
   # Connect to the Spanner API endpoint over a gRPC channel.
-  defp grpc_connect(opts) do
+  defp grpc_connect(opts, state) do
     grpc_host = Keyword.get(opts, :host, "spanner.googleapis.com:443")
     grpc_opts = Keyword.get(opts, :grpc_opts, [])
 
-    # We require `content-type` and `authorization` headers to be set during the gRPC connection.
-    headers = Keyword.get(grpc_opts, :headers, [])
-
-    # If no authorization header is supplied, use goth to fetch an access token.
+    # We control `content-type` and `authorization` headers to ensure proper connectivity to the Spanner API.
     headers =
-      if List.keymember?(headers, "authorization", 0) do
-        headers
-      else
-        %{
-          type: type,
-          token: token
-        } = Goth.fetch!(Credits.Goth)
-        [{"authorization", "#{type} #{token}"} | headers]
-      end
-
-    # Spanner requires content-type to be set to "application/grpc".
-    headers = List.keystore(headers, "content-type", 0, {"content-type", "application/grpc"})
+      grpc_opts
+      |> Keyword.get(:headers, [])
+      |> sanitize_headers([])
+    headers = [
+      {"content-type", "application/grpc"}
+      | headers
+    ]
 
     # If `cred` is not set, but `443` is specified in the host, add a default SSL-enabled `cred` option.
     grpc_opts =
@@ -134,15 +132,32 @@ defmodule Spannex.Protocol do
         _ ->
           grpc_opts
       end
-
     grpc_opts = Keyword.put(grpc_opts, :headers, headers)
 
     Logger.debug("Connecting to the Spanner gRPC endpoint: #{grpc_host}", host: grpc_host, opts: opts)
-    GRPC.Stub.connect(grpc_host, grpc_opts)
+    case GRPC.Stub.connect(grpc_host, grpc_opts) do
+      {:ok, channel} ->
+        {:ok, %{state | channel: channel}}
+
+      error ->
+        error
+    end
+  end
+
+  # Ensure `content-type` and `authorization` headers are removed.
+  defp sanitize_headers([], acc), do: acc
+  defp sanitize_headers([{header, _} = tuple | headers], acc) do
+    case String.downcase(header) do
+      h when h in ["content-type", "authorization"] ->
+        sanitize_headers(headers, acc)
+
+      _ ->
+        sanitize_headers(headers, [tuple | acc])
+    end
   end
 
   # Given a gRPC channel, create a new session for the database connection.
-  defp create_session(channel, opts) do
+  defp create_session(opts, state) do
     database = Keyword.fetch!(opts, :database)
     labels = Keyword.get(opts, :labels, %{})
 
@@ -154,9 +169,9 @@ defmodule Spannex.Protocol do
     }
 
     Logger.debug("Creating a new Spanner session to #{database}", database: database, labels: labels)
-    case Service.create_session(channel, request) do
+    case Service.execute(state, request) do
       {:ok, session} ->
-        {:ok, %__MODULE__{channel: channel, session: session}}
+        {:ok, %{state | session: session}}
 
       error ->
         error
@@ -164,13 +179,13 @@ defmodule Spannex.Protocol do
   end
 
   @impl DBConnection
-  def disconnect(_err, %{channel: channel, session: session}) do
+  def disconnect(_err, %{session: session} = state) do
     Logger.debug("Disconnecting from Spanner", session: session)
-    Service.delete_session(
-      channel,
+    Service.execute(
+      state,
       %Spanner.DeleteSessionRequest{name: session.name}
     )
-    GRPC.Stub.disconnect(channel)
+    GRPC.Stub.disconnect(state.channel)
     :ok
   end
 
@@ -221,7 +236,7 @@ defmodule Spannex.Protocol do
           }
         }
 
-        case Service.begin_transaction(state.channel, request) do
+        case Service.execute(state, request) do
           {:ok, %{id: tx_id}} ->
             {:ok, nil, %{state | status: :transaction, transaction: type, transaction_id: tx_id, seqno: 0}}
 
@@ -251,7 +266,7 @@ defmodule Spannex.Protocol do
         }
       ]
     }
-    {:ok, %Spanner.BatchWriteResponse{status: status}} = Service.batch_write(state.channel, request)
+    {:ok, %Spanner.BatchWriteResponse{status: status}} = Service.execute(state, request)
     case status do
       %{code: 0} ->
         {:ok, :ok, %{state | status: :idle, transaction: :none, queries: []}}
@@ -267,7 +282,7 @@ defmodule Spannex.Protocol do
       transaction: {:transaction_id, state.transaction_id},
       return_commit_stats: true
     }
-    case Service.commit(state.channel, request) do
+    case Service.execute(state, request) do
       {:ok, %Spanner.CommitResponse{commit_stats: stats}} ->
         {:ok, stats, %{state | status: :idle, transaction: :none, transaction_id: nil}}
 
@@ -294,7 +309,7 @@ defmodule Spannex.Protocol do
       session: state.session.name,
       transaction_id: state.transaction_id
     }
-    case Service.rollback(state.channel, request) do
+    case Service.execute(state, request) do
       {:ok, _} ->
         {:ok, :ok, %{state | status: :idle, transaction: :none, transaction_id: nil}}
 
@@ -336,7 +351,7 @@ defmodule Spannex.Protocol do
       params: wrap_params(params),
       seqno: seqno,
     }
-    case Service.execute_sql(state.channel, request) do
+    case Service.execute(state, request) do
       {:ok, %Spanner.ResultSet{} = results} ->
         {:ok, query, decode_results(results), %{state | seqno: seqno + 1}}
 
@@ -352,7 +367,7 @@ defmodule Spannex.Protocol do
       sql: query.statement,
       params: wrap_params(params)
     }
-    {:ok, %Spanner.ResultSet{} = results} = Service.execute_sql(state.channel, request)
+    {:ok, %Spanner.ResultSet{} = results} = Service.execute(state, request)
     {:ok, query, decode_results(results), state}
   end
 

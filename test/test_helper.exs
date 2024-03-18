@@ -52,13 +52,14 @@ defmodule TestLifecycle do
   end
 end
 
+{:ok, _} = Goth.start_link(name: Spannex.Goth)
+
 # If we have `SPANNER_EMULATOR_HOST` set, use that for local testing.
 opts =
   case System.get_env("SPANNER_EMULATOR_HOST") do
     nil ->
       # Otherwise we *require* `SPANNER_DATABASE` to be set and Goth to be configured.
-      {:ok, _} = Goth.start_link(name: Spannex.Goth)
-      opts = [name: Spannex.Conn, database: System.fetch_env!("SPANNER_DATABASE")]
+      opts = [name: Spannex.Conn, database: System.fetch_env!("SPANNER_DATABASE"), goth: Spannex.Goth]
       case System.get_env("SPANNER_HOST") do
         nil ->
           opts
@@ -73,7 +74,7 @@ opts =
       ExUnit.after_suite(fn _ ->
         TestLifecycle.teardown(channel)
       end)
-      [name: Spannex.Conn, host: host, database: database, grpc_opts: [headers: [{"authorization", "Bearer none"}]]]
+      [name: Spannex.Conn, host: host, database: database, goth: Spannex.Goth]
   end
 
 ExUnit.start()
