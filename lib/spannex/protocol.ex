@@ -196,11 +196,19 @@ defmodule Spannex.Protocol do
   def checkout(state), do: {:ok, state}
 
   @doc """
-  Performs a `GetSession` request to ensure the session is still valid and operational.
+  Attempts to perform an inexpensive database operation to ensure the session is still valid. If successful, the operation should also ensure Spanner doesn't drop the session since it's technically an "active" session.
   """
   @impl DBConnection
   def ping(state) do
-    case Service.execute(state, %Spanner.GetSessionRequest{name: state.session.name}) do
+    # Spanner documentation states that you should perform an inexpensive operation to
+    # ensure Spanner doesn't drop an inactive session, something like `SELECT 1`.
+    # If the result isn't successful, we know the session is no longer valid.
+    request = %Spanner.ExecuteSqlRequest{
+      session: state.session.name,
+      sql: "SELECT 1",
+      params: %{}
+    }
+    case Service.execute(state, request) do
       {:ok, _} ->
         {:ok, state}
 
