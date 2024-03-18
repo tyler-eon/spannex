@@ -196,10 +196,18 @@ defmodule Spannex.Protocol do
   def checkout(state), do: {:ok, state}
 
   @doc """
-  No-op
+  Performs a `GetSession` request to ensure the session is still valid and operational.
   """
   @impl DBConnection
-  def ping(state), do: {:ok, state}
+  def ping(state) do
+    case Service.execute(state, %Spanner.GetSessionRequest{name: state.session.name}) do
+      {:ok, _} ->
+        {:ok, state}
+
+      {:error, error} ->
+        {:disconnect, error, state}
+    end
+  end
 
   @doc """
   Begins a new transaction. You *must* use a transaction for any mutations, i.e. anything that isn't a `SELECT` query.
