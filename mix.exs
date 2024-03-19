@@ -14,7 +14,7 @@ defmodule Spannex.MixProject do
       package: package(),
       docs: docs(),
       source_url: "https://github.com/tyler-eon/spannex",
-      homepage_url: "https://github.com/tyler-eon/spannex",
+      homepage_url: "https://github.com/tyler-eon/spannex"
     ]
   end
 
@@ -32,7 +32,7 @@ defmodule Spannex.MixProject do
       {:goth, "~> 1.4"},
       {:google_protos, "~> 0.4"},
       {:grpc, "~> 0.7"},
-      {:ex_doc, ">= 0.0.0", only: :dev, runtime: false},
+      {:ex_doc, ">= 0.0.0", only: :dev, runtime: false}
     ]
   end
 
@@ -42,8 +42,8 @@ defmodule Spannex.MixProject do
       main: "Spannex",
       extras: [
         "README.md",
-        "LICENSE",
-      ],
+        "LICENSE"
+      ]
     ]
   end
 
@@ -51,9 +51,9 @@ defmodule Spannex.MixProject do
   defp package do
     [
       links: %{
-        "GitHub" => "https://github.com/tyler-eon/spannex",
+        "GitHub" => "https://github.com/tyler-eon/spannex"
       },
-      licenses: ["Apache-2.0"],
+      licenses: ["Apache-2.0"]
     ]
   end
 end

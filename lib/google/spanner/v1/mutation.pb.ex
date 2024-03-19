@@ -3,9 +3,9 @@ defmodule Google.Spanner.V1.Mutation.Write do
 
   use Protobuf, syntax: :proto3, protoc_gen_elixir_version: "0.12.0"
 
-  field :table, 1, type: :string, deprecated: false
-  field :columns, 2, repeated: true, type: :string
-  field :values, 3, repeated: true, type: Google.Protobuf.ListValue
+  field(:table, 1, type: :string, deprecated: false)
+  field(:columns, 2, repeated: true, type: :string)
+  field(:values, 3, repeated: true, type: Google.Protobuf.ListValue)
 end
 
 defmodule Google.Spanner.V1.Mutation.Delete do
@@ -13,8 +13,8 @@ defmodule Google.Spanner.V1.Mutation.Delete do
 
   use Protobuf, syntax: :proto3, protoc_gen_elixir_version: "0.12.0"
 
-  field :table, 1, type: :string, deprecated: false
-  field :key_set, 2, type: Google.Spanner.V1.KeySet, json_name: "keySet", deprecated: false
+  field(:table, 1, type: :string, deprecated: false)
+  field(:key_set, 2, type: Google.Spanner.V1.KeySet, json_name: "keySet", deprecated: false)
 end
 
 defmodule Google.Spanner.V1.Mutation do
@@ -22,16 +22,17 @@ defmodule Google.Spanner.V1.Mutation do
 
   use Protobuf, syntax: :proto3, protoc_gen_elixir_version: "0.12.0"
 
-  oneof :operation, 0
+  oneof(:operation, 0)
 
-  field :insert, 1, type: Google.Spanner.V1.Mutation.Write, oneof: 0
-  field :update, 2, type: Google.Spanner.V1.Mutation.Write, oneof: 0
+  field(:insert, 1, type: Google.Spanner.V1.Mutation.Write, oneof: 0)
+  field(:update, 2, type: Google.Spanner.V1.Mutation.Write, oneof: 0)
 
-  field :insert_or_update, 3,
+  field(:insert_or_update, 3,
     type: Google.Spanner.V1.Mutation.Write,
     json_name: "insertOrUpdate",
     oneof: 0
+  )
 
-  field :replace, 4, type: Google.Spanner.V1.Mutation.Write, oneof: 0
-  field :delete, 5, type: Google.Spanner.V1.Mutation.Delete, oneof: 0
+  field(:replace, 4, type: Google.Spanner.V1.Mutation.Write, oneof: 0)
+  field(:delete, 5, type: Google.Spanner.V1.Mutation.Delete, oneof: 0)
 end

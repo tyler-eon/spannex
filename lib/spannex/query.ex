@@ -3,15 +3,13 @@ defmodule Spannex.Query do
   Handles parsing and preparing queries for use by the Spanner database connection protocol.
   """
 
-  defstruct [
-    statement: nil,
-    params: nil,
-  ]
+  defstruct statement: nil,
+            params: nil
 
   @type t :: %__MODULE__{
-    statement: String.t(),
-    params: Map.t(),
-  }
+          statement: String.t(),
+          params: Map.t()
+        }
 end
 
 defimpl DBConnection.Query, for: Spannex.Query do

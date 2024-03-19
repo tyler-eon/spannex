@@ -48,26 +48,24 @@ defmodule Spannex.Protocol do
   @type transaction_type :: :none | :batch_write | :read_write | :read_only | :partitioned_dml
 
   @type t :: %__MODULE__{
-    channel: GRPC.Channel.t(),
-    session: Spanner.Session.t(),
-    status: DBConnection.status(),
-    transaction: transaction_type(),
-    transaction_id: String.t(),
-    seqno: non_neg_integer(),
-    queries: [DBConnection.query()],
-    goth: term(),
-  }
+          channel: GRPC.Channel.t(),
+          session: Spanner.Session.t(),
+          status: DBConnection.status(),
+          transaction: transaction_type(),
+          transaction_id: String.t(),
+          seqno: non_neg_integer(),
+          queries: [DBConnection.query()],
+          goth: term()
+        }
 
-  defstruct [
-    channel: nil,
-    session: nil,
-    status: :idle,
-    transaction: :none,
-    transaction_id: nil,
-    seqno: 0,
-    queries: [],
-    goth: nil,
-  ]
+  defstruct channel: nil,
+            session: nil,
+            status: :idle,
+            transaction: :none,
+            transaction_id: nil,
+            seqno: 0,
+            queries: [],
+            goth: nil
 
   @doc """
   Start a new gRPC connection to the Spanner API and also generate a new session.
@@ -91,7 +89,7 @@ defmodule Spannex.Protocol do
     Process.flag(:trap_exit, true)
 
     state = %__MODULE__{
-      goth: Keyword.fetch!(opts, :goth),
+      goth: Keyword.fetch!(opts, :goth)
     }
 
     case grpc_connect(opts, state) do
@@ -113,6 +111,7 @@ defmodule Spannex.Protocol do
       grpc_opts
       |> Keyword.get(:headers, [])
       |> sanitize_headers([])
+
     headers = [
       {"content-type", "application/grpc"}
       | headers
@@ -132,9 +131,11 @@ defmodule Spannex.Protocol do
         _ ->
           grpc_opts
       end
+
     grpc_opts = Keyword.put(grpc_opts, :headers, headers)
 
     Logger.debug("Connecting to the Spanner gRPC endpoint: #{grpc_host}", host: grpc_host, opts: opts)
+
     case GRPC.Stub.connect(grpc_host, grpc_opts) do
       {:ok, channel} ->
         {:ok, %{state | channel: channel}}
@@ -146,6 +147,7 @@ defmodule Spannex.Protocol do
 
   # Ensure `content-type` and `authorization` headers are removed.
   defp sanitize_headers([], acc), do: acc
+
   defp sanitize_headers([{header, _} = tuple | headers], acc) do
     case String.downcase(header) do
       h when h in ["content-type", "authorization"] ->
@@ -169,6 +171,7 @@ defmodule Spannex.Protocol do
     }
 
     Logger.debug("Creating a new Spanner session to #{database}", database: database, labels: labels)
+
     case Service.execute(state, request) do
       {:ok, session} ->
         {:ok, %{state | session: session}}
@@ -181,10 +184,12 @@ defmodule Spannex.Protocol do
   @impl DBConnection
   def disconnect(_err, %{session: session} = state) do
     Logger.debug("Disconnecting from Spanner", session: session)
+
     Service.execute(
       state,
       %Spanner.DeleteSessionRequest{name: session.name}
     )
+
     GRPC.Stub.disconnect(state.channel)
     :ok
   end
@@ -208,6 +213,7 @@ defmodule Spannex.Protocol do
       sql: "SELECT 1",
       params: %{}
     }
+
     case Service.execute(state, request) do
       {:ok, _} ->
         {:ok, state}
@@ -273,7 +279,8 @@ defmodule Spannex.Protocol do
   def handle_commit(_opts, %{status: :transaction, transaction: :batch_write} = state) do
     # Don't have a great way to separate groups of statements into multiple mutations groups,
     # so for now we just always commit a single mutation group filled with all the pending queries.
-    mutations = Enum.map(state.queries, &(query_to_mutation(&1)))
+    mutations = Enum.map(state.queries, &query_to_mutation(&1))
+
     request = %Spanner.BatchWriteRequest{
       session: state.session.name,
       mutation_groups: [
@@ -282,7 +289,9 @@ defmodule Spannex.Protocol do
         }
       ]
     }
+
     {:ok, %Spanner.BatchWriteResponse{status: status}} = Service.execute(state, request)
+
     case status do
       %{code: 0} ->
         {:ok, :ok, %{state | status: :idle, transaction: :none, queries: []}}
@@ -298,6 +307,7 @@ defmodule Spannex.Protocol do
       transaction: {:transaction_id, state.transaction_id},
       return_commit_stats: true
     }
+
     case Service.execute(state, request) do
       {:ok, %Spanner.CommitResponse{commit_stats: stats}} ->
         {:ok, stats, %{state | status: :idle, transaction: :none, transaction_id: nil}}
@@ -325,6 +335,7 @@ defmodule Spannex.Protocol do
       session: state.session.name,
       transaction_id: state.transaction_id
     }
+
     case Service.execute(state, request) do
       {:ok, _} ->
         {:ok, :ok, %{state | status: :idle, transaction: :none, transaction_id: nil}}
@@ -365,8 +376,9 @@ defmodule Spannex.Protocol do
       },
       sql: query.statement,
       params: wrap_params(params),
-      seqno: seqno,
+      seqno: seqno
     }
+
     case Service.execute(state, request) do
       {:ok, %Spanner.ResultSet{} = results} ->
         {:ok, query, decode_results(results), %{state | seqno: seqno + 1}}
@@ -383,6 +395,7 @@ defmodule Spannex.Protocol do
       sql: query.statement,
       params: wrap_params(params)
     }
+
     {:ok, %Spanner.ResultSet{} = results} = Service.execute(state, request)
     {:ok, query, decode_results(results), state}
   end
@@ -399,10 +412,12 @@ defmodule Spannex.Protocol do
       |> Enum.map(fn
         {key, value} when is_atom(key) ->
           {Atom.to_string(key), wrap_value(value)}
+
         {key, value} when is_binary(key) ->
           {key, wrap_value(value)}
       end)
       |> Enum.into(%{})
+
     %Google.Protobuf.Struct{fields: fields}
   end
 
@@ -419,8 +434,15 @@ defmodule Spannex.Protocol do
   defp wrap_value(value) when is_boolean(value), do: %Google.Protobuf.Value{kind: {:bool_value, value}}
 
   # Aggregate types.
-  #defp wrap_value(value) when is_list(value), do: %Google.Protobuf.Value{kind: {:list_value, wrap_list(value)}}
-  #defp wrap_value(value) when is_map(value), do: %Google.Protobuf.Value{kind: {:struct_value, wrap_struct(value)}}
+  defp wrap_value(value) when is_list(value), do: %Google.Protobuf.ListValue{values: Enum.map(value, &wrap_value/1)}
+  defp wrap_value(value) when is_map(value) do
+    %Google.Protobuf.Struct{
+      fields:
+        Enum.map(value, fn {k, v} ->
+          %Google.Protobuf.Struct.FieldsEntry{key: k, value: wrap_value(v)}
+        end)
+    }
+  end
 
   @doc """
   No-op
@@ -464,6 +486,7 @@ defmodule Spannex.Protocol do
     case Regex.named_captures(@insert_re, sql) do
       %{"table" => table, "columns" => columns, "values" => values_tuples} ->
         columns = split_list(columns)
+
         values =
           values_tuples
           |> String.split(@values_re)
@@ -474,7 +497,9 @@ defmodule Spannex.Protocol do
               replace_with_param(value, params)
             end)
           end)
+
         {:ok, make_mutation(:insert, table, columns, values)}
+
       _ ->
         {:error, %GRPC.RPCError{status: 3, message: "Invalid INSERT statement."}}
     end
@@ -487,12 +512,13 @@ defmodule Spannex.Protocol do
         # Then append the columns+values for the stuff that needs updating.
         # This means UPDATE mutations cannot update primary key columns.
         {columns, values} =
-          Regex.scan(@where_re, where) ++ Regex.scan(@value_re, update)
+          (Regex.scan(@where_re, where) ++ Regex.scan(@value_re, update))
           |> Enum.reduce({[], []}, fn [c, v], {cols, vals} ->
             {[c | cols], [replace_with_param(v, params) | vals]}
           end)
 
         {:ok, make_mutation(:update, table, columns, values)}
+
       _ ->
         {:error, %GRPC.RPCError{status: 3, message: "Invalid UPDATE statement."}}
     end
@@ -501,11 +527,14 @@ defmodule Spannex.Protocol do
   def query_to_mutation(%{statement: "DELETE " <> _ = sql, params: params}) do
     case Regex.named_captures(@delete_re, sql) do
       %{"table" => table, "where" => where} ->
-        values = Enum.map(Regex.scan(@where_re, where), fn [value_str] ->
-          [_, value] = split_pair(value_str)
-          replace_with_param(value, params)
-        end)
+        values =
+          Enum.map(Regex.scan(@where_re, where), fn [value_str] ->
+            [_, value] = split_pair(value_str)
+            replace_with_param(value, params)
+          end)
+
         {:ok, make_mutation(:delete, table, nil, values)}
+
       _ ->
         {:error, %GRPC.RPCError{status: 3, message: "Invalid DELETE statement."}}
     end
@@ -526,7 +555,6 @@ defmodule Spannex.Protocol do
   # If it's not a named parameter or a string literal, just return the value as-is.
   defp replace_with_param(value, _params), do: value
 
-
   @doc """
   Creates a mutation struct for the given operation. For anything other than a `:delete` operation, the `columns` and `rows` parameters are used to create a `Google.Spanner.V1.Mutation.Write` struct.
 
@@ -534,6 +562,7 @@ defmodule Spannex.Protocol do
   """
   def make_mutation(:delete, table, _columns, rows) do
     key_set = %Spanner.KeySet{keys: rows}
+
     %Spanner.Mutation{
       operation: {:delete, %Spanner.Mutation.Delete{table: table, key_set: key_set}}
     }

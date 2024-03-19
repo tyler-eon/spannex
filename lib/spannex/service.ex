@@ -31,6 +31,7 @@ defmodule Spannex.Service do
   # Generates metadata that should be added to each gRPC request.
   defp request_metadata(state) do
     %{type: type, token: token} = Goth.fetch!(state.goth)
+
     %{
       "authorization" => type <> " " <> token
     }

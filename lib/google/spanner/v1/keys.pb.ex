@@ -3,14 +3,14 @@ defmodule Google.Spanner.V1.KeyRange do
 
   use Protobuf, syntax: :proto3, protoc_gen_elixir_version: "0.12.0"
 
-  oneof :start_key_type, 0
+  oneof(:start_key_type, 0)
 
-  oneof :end_key_type, 1
+  oneof(:end_key_type, 1)
 
-  field :start_closed, 1, type: Google.Protobuf.ListValue, json_name: "startClosed", oneof: 0
-  field :start_open, 2, type: Google.Protobuf.ListValue, json_name: "startOpen", oneof: 0
-  field :end_closed, 3, type: Google.Protobuf.ListValue, json_name: "endClosed", oneof: 1
-  field :end_open, 4, type: Google.Protobuf.ListValue, json_name: "endOpen", oneof: 1
+  field(:start_closed, 1, type: Google.Protobuf.ListValue, json_name: "startClosed", oneof: 0)
+  field(:start_open, 2, type: Google.Protobuf.ListValue, json_name: "startOpen", oneof: 0)
+  field(:end_closed, 3, type: Google.Protobuf.ListValue, json_name: "endClosed", oneof: 1)
+  field(:end_open, 4, type: Google.Protobuf.ListValue, json_name: "endOpen", oneof: 1)
 end
 
 defmodule Google.Spanner.V1.KeySet do
@@ -18,7 +18,7 @@ defmodule Google.Spanner.V1.KeySet do
 
   use Protobuf, syntax: :proto3, protoc_gen_elixir_version: "0.12.0"
 
-  field :keys, 1, repeated: true, type: Google.Protobuf.ListValue
-  field :ranges, 2, repeated: true, type: Google.Spanner.V1.KeyRange
-  field :all, 3, type: :bool
+  field(:keys, 1, repeated: true, type: Google.Protobuf.ListValue)
+  field(:ranges, 2, repeated: true, type: Google.Spanner.V1.KeyRange)
+  field(:all, 3, type: :bool)
 end
