@@ -588,22 +588,23 @@ defmodule Spannex.Protocol do
 
   def decode_row([], [], acc), do: acc
 
-  def decode_row([%{name: field, type: %{code: type}} | fields], [%{kind: {wire_type, wire_value}} | rows], acc) do
-    acc = Map.put(acc, field, convert_value(type, wire_type, wire_value))
+  def decode_row([%{name: field, type: %{code: type}} | fields], [%{kind: {_, wire_value}} | rows], acc) do
+    acc = Map.put(acc, field, convert_value(type, wire_value))
     decode_row(fields, rows, acc)
   end
 
   @doc """
   Converts a single column value from its gRPC-encoded form to its Elixir-native representation. The `type` parameter is the native type of the column and the `enc_type` parameter is the type of the encoded value.
   """
-  def convert_value(_, :null_value, :NULL_VALUE), do: nil
-  def convert_value(:INT64, :string_value, value), do: String.to_integer(value)
-  def convert_value(:FLOAT64, :string_value, value), do: String.to_float(value)
-  def convert_value(:BOOL, :string_value, "true"), do: true
-  def convert_value(:BOOL, :string_value, "false"), do: false
-  def convert_value(:STRING, :string_value, value), do: value
-  def convert_value(:BYTES, :string_value, value), do: Base.decode64(value)
-  def convert_value(:TIMESTAMP, :string_value, value), do: DateTime.from_iso8601(value)
-  def convert_value(:DATE, :string_value, value), do: Date.from_iso8601(value)
-  def convert_value(_, _, value), do: value
+  def convert_value(_, :NULL_VALUE), do: nil
+  def convert_value(:INT64, value) when is_binary(value), do: String.to_integer(value)
+  def convert_value(:FLOAT64, value) when is_binary(value), do: String.to_float(value)
+  def convert_value(:BOOL, "true"), do: true
+  def convert_value(:BOOL, "false"), do: false
+  def convert_value(:STRING, value) when is_binary(value), do: value
+  def convert_value(:BYTES, value) when is_binary(value), do: Base.decode64(value)
+  def convert_value(:TIMESTAMP, value) when is_binary(value), do: DateTime.from_iso8601(value) |> elem(1)
+  def convert_value(:TIMESTAMP, value) when is_number(value), do: DateTime.from_unix!(trunc(value))
+  def convert_value(:DATE, value) when is_binary(value), do: Date.from_iso8601(value) |> elem(1)
+  def convert_value(_, value), do: value
 end
