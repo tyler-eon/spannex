@@ -597,9 +597,9 @@ defmodule Spannex.Protocol do
   Converts a single column value from its gRPC-encoded form to its Elixir-native representation. The `type` parameter is the native type of the column and the `enc_type` parameter is the type of the encoded value.
   """
   def convert_value(_, :NULL_VALUE), do: nil
+  def convert_value(:NUMERIC, value) when is_binary(value), do: Decimal.new(value)
   def convert_value(:INT64, value) when is_binary(value), do: String.to_integer(value)
   def convert_value(:FLOAT64, value) when is_binary(value), do: String.to_float(value)
-  def convert_value(:NUMERIC, value) when is_binary(value), do: String.to_float(value) # TODO: Use Decimal or something for this.
   def convert_value(:BOOL, "true"), do: true
   def convert_value(:BOOL, "false"), do: false
   def convert_value(:STRING, value) when is_binary(value), do: value

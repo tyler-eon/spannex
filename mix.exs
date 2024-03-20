@@ -4,7 +4,7 @@ defmodule Spannex.MixProject do
   def project do
     [
       app: :spannex,
-      version: "0.6.1",
+      version: "0.6.2",
       elixir: "~> 1.15",
       start_permanent: Mix.env() == :prod,
       deps: deps(),
@@ -32,6 +32,7 @@ defmodule Spannex.MixProject do
       {:goth, "~> 1.4"},
       {:google_protos, "~> 0.4"},
       {:grpc, "~> 0.7"},
+      {:decimal, "~> 2.1"},
       {:ex_doc, ">= 0.0.0", only: :dev, runtime: false}
     ]
   end
