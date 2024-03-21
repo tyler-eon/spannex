@@ -375,13 +375,13 @@ defmodule Spannex.Protocol do
         selector: {:id, state.transaction_id}
       },
       sql: query.statement,
-      params: wrap_params(params),
+      params: params,
       seqno: seqno
     }
 
     case Service.execute(state, request) do
       {:ok, %Spanner.ResultSet{} = results} ->
-        {:ok, query, decode_results(results), %{state | seqno: seqno + 1}}
+        {:ok, query, results, %{state | seqno: seqno + 1}}
 
       {:error, error} ->
         {:disconnect, error, state}
@@ -393,55 +393,16 @@ defmodule Spannex.Protocol do
     request = %Spanner.ExecuteSqlRequest{
       session: state.session.name,
       sql: query.statement,
-      params: wrap_params(params)
+      params: params
     }
 
     {:ok, %Spanner.ResultSet{} = results} = Service.execute(state, request)
-    {:ok, query, decode_results(results), state}
+    {:ok, query, results, state}
   end
 
   def handle_execute(_query, _params, _opts, state) do
     # All requests that are not SELECTs require an explicit transaction.
     {:error, %GRPC.RPCError{status: 9, message: "Cannot execute write statements outside of a transaction."}, state}
-  end
-
-  # Wrap a set of named parameters in a `Google.Protobuf.Struct`.
-  defp wrap_params(%{params: params}) do
-    fields =
-      params
-      |> Enum.map(fn
-        {key, value} when is_atom(key) ->
-          {Atom.to_string(key), wrap_value(value)}
-
-        {key, value} when is_binary(key) ->
-          {key, wrap_value(value)}
-      end)
-      |> Enum.into(%{})
-
-    %Google.Protobuf.Struct{fields: fields}
-  end
-
-  # Special nil value.
-  defp wrap_value(nil), do: %Google.Protobuf.Value{kind: {:null_value, :NULL_VALUE}}
-
-  # Whoa wtf is this? Well, gRPC encodes to JSON, but integers in JSON only are guaranteed up to 32-bits. So how does Google solve this?
-  # They use strings! Any INT64 data type is returned as a string and must be sent as a string to be converted back to a numeric value at the destination.
-  defp wrap_value(value) when is_integer(value), do: %Google.Protobuf.Value{kind: {:string_value, Integer.to_string(value)}}
-
-  # Standard types.
-  defp wrap_value(value) when is_binary(value), do: %Google.Protobuf.Value{kind: {:string_value, value}}
-  defp wrap_value(value) when is_float(value), do: %Google.Protobuf.Value{kind: {:number_value, value}}
-  defp wrap_value(value) when is_boolean(value), do: %Google.Protobuf.Value{kind: {:bool_value, value}}
-
-  # Aggregate types.
-  defp wrap_value(value) when is_list(value), do: %Google.Protobuf.ListValue{values: Enum.map(value, &wrap_value/1)}
-  defp wrap_value(value) when is_map(value) do
-    %Google.Protobuf.Struct{
-      fields:
-        Enum.map(value, fn {k, v} ->
-          %Google.Protobuf.Struct.FieldsEntry{key: k, value: wrap_value(v)}
-        end)
-    }
   end
 
   @doc """
@@ -576,36 +537,4 @@ defmodule Spannex.Protocol do
       }
     }
   end
-
-  @doc """
-  Converts the row data from a `Google.Spanner.V1.ResultSet` into a list of maps, where each map is one row of the result set. The keys of the map are the column names and the values are the column values. The column values are converted from their encoded form to their Elixir-native representation.
-  """
-  def decode_results(%Spanner.ResultSet{metadata: %{row_type: %{fields: fields}}, rows: rows}) do
-    Enum.map(rows, fn %{values: row} ->
-      decode_row(fields, row, %{})
-    end)
-  end
-
-  def decode_row([], [], acc), do: acc
-
-  def decode_row([%{name: field, type: %{code: type}} | fields], [%{kind: {_, wire_value}} | rows], acc) do
-    acc = Map.put(acc, field, convert_value(type, wire_value))
-    decode_row(fields, rows, acc)
-  end
-
-  @doc """
-  Converts a single column value from its gRPC-encoded form to its Elixir-native representation. The `type` parameter is the native type of the column and the `enc_type` parameter is the type of the encoded value.
-  """
-  def convert_value(_, :NULL_VALUE), do: nil
-  def convert_value(:NUMERIC, value) when is_binary(value), do: Decimal.new(value)
-  def convert_value(:INT64, value) when is_binary(value), do: String.to_integer(value)
-  def convert_value(:FLOAT64, value) when is_binary(value), do: String.to_float(value)
-  def convert_value(:BOOL, "true"), do: true
-  def convert_value(:BOOL, "false"), do: false
-  def convert_value(:STRING, value) when is_binary(value), do: value
-  def convert_value(:BYTES, value) when is_binary(value), do: Base.decode64(value)
-  def convert_value(:TIMESTAMP, value) when is_binary(value), do: DateTime.from_iso8601(value) |> elem(1)
-  def convert_value(:TIMESTAMP, value) when is_number(value), do: DateTime.from_unix!(trunc(value))
-  def convert_value(:DATE, value) when is_binary(value), do: Date.from_iso8601(value) |> elem(1)
-  def convert_value(_, value), do: value
 end
